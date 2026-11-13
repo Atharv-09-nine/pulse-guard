@@ -35,8 +35,21 @@ export interface TelemetryData {
   // Grid Status
   gridStatus: 'NORMAL' | 'OVERVOLTAGE' | 'UNDERVOLTAGE' | 'TAMPER_ALERT'
 
-  // Top Load Breakdown (NILM Disaggregation)
+  // Hardware AT24C32 EEPROM Persistent Indicator
+  eepromBackup: boolean
+
+  // Top Load Breakdown (Harmonics / NILM Disaggregation)
   loadBreakdown: {
+    heatingWatts: number
+    heatingPercent: number
+    electronicsWatts: number
+    electronicsPercent: number
+    coolingWatts: number
+    coolingPercent: number
+    vampireWatts: number
+    vampirePercent: number
+
+    // Compatibility keys
     hvacWatts: number
     hvacPercent: number
     kitchenWatts: number
@@ -124,16 +137,17 @@ export type WifiStatus = 'CONNECTED' | 'WAITING' | 'OFFLINE' | 'ERROR'
 
 export interface WifiReceiverConfig {
   mode: WifiConnectionMode
-  localIp: string // e.g. "192.168.1.150"
-  localEndpoint: string // e.g. "http://192.168.1.150/data"
+  localIp: string // e.g. "10.50.134.121" or "192.168.1.150"
+  localEndpoint: string // e.g. "http://10.50.134.121/telemetry" or "/data"
   firebaseUrl: string // e.g. "https://retrometer-default-rtdb.firebaseio.com/telemetry.json"
-  websocketUrl: string // e.g. "ws://192.168.1.150:81"
+  websocketUrl: string // e.g. "ws://10.50.134.121:81"
   pollIntervalMs: number // e.g. 1000
   autoConnect: boolean
 }
 
 export interface RawWifiPacket {
   status?: string
+  tamperStatus?: string
   time?: string
   rtcTime?: string
   voltage?: number
@@ -147,10 +161,11 @@ export interface RawWifiPacket {
   activeWatts?: number
   active_watts?: number
   p?: number
-  pf?: number
+  pf?: number | number[]
   powerFactor?: number
   frequency?: number
   freq?: number
+  hz?: number
   opt_power?: number
   opticalWatts?: number
   optWatts?: number
@@ -167,19 +182,21 @@ export interface RawWifiPacket {
   pulseIntervalMs?: number
   thd?: number
   thdPercent?: number
+  thdI?: number
   h3?: number
   h3Percent?: number
   h5?: number
   h5Percent?: number
   h7?: number
   h7Percent?: number
-  // Multi-CT array or channel currents
-  ct?: {
-    channel: number
+  eeprom_backup?: boolean
+  // Multi-CT array supporting both number[] and object[] formats
+  ct?: (number | {
+    channel?: number
     current?: number
     power?: number
     pf?: number
-  }[]
+  })[]
   i1?: number
   i2?: number
   i3?: number

@@ -9,6 +9,8 @@ import AuthScreen from './pages/AuthScreen'
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const UsageTariffs = lazy(() => import('./pages/UsageTariffs'))
 const SecurityHealth = lazy(() => import('./pages/SecurityHealth'))
+const HardwareSetup = lazy(() => import('./pages/HardwareSetup'))
+const AdminLoginPage = lazy(() => import('./pages/AdminLoginPage'))
 
 function PageFallback() {
   return (
@@ -24,21 +26,39 @@ function PageFallback() {
 function MainRoutes() {
   const { isAuthenticated } = useAuth()
 
-  if (!isAuthenticated) {
-    return <AuthScreen />
-  }
-
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      {/* Direct verification link: Admin Login */}
+      <Route path="/admin-login" element={<AdminLoginPage />} />
 
-      <Route path="/dashboard" element={<DashboardLayout />}>
-        <Route index element={<Dashboard />} />
-        <Route path="usage" element={<UsageTariffs />} />
-        <Route path="security" element={<SecurityHealth />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      {/* Direct verification link: PulseGuard Engineering View */}
+      <Route
+        path="/engineering"
+        element={
+          isAuthenticated ? (
+            <Navigate to="/dashboard/engineering" replace />
+          ) : (
+            <DashboardLayout />
+          )
+        }
+      >
+        <Route index element={<HardwareSetup />} />
       </Route>
 
+      {/* Protected Routes */}
+      {isAuthenticated ? (
+        <Route path="/dashboard" element={<DashboardLayout />}>
+          <Route index element={<Dashboard />} />
+          <Route path="usage" element={<UsageTariffs />} />
+          <Route path="security" element={<SecurityHealth />} />
+          <Route path="engineering" element={<HardwareSetup />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Route>
+      ) : (
+        <Route path="*" element={<AuthScreen />} />
+      )}
+
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   )

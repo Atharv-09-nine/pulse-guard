@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useTelemetry } from '../context/TelemetryContext'
+import { useTelemetry, ConnectionTestResult } from '../context/TelemetryContext'
 import { useTheme } from '../context/ThemeContext'
 import { HARDWARE_SPECS, ESP32_PIN_MAP } from '../config/hardwareMap'
 import {
@@ -26,6 +26,8 @@ import {
   Play,
   Pause,
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 
 export default function AdminConfigDrawer() {
@@ -49,10 +51,30 @@ export default function AdminConfigDrawer() {
     ctCalibrations,
     updateCTCalibration,
     sources,
+    testConnection,
   } = useTelemetry()
   const { colors } = useTheme()
 
   const [activeTab, setActiveTab] = useState<'wifi' | 'simulator' | 'multict' | 'tariffs' | 'harmonics'>('wifi')
+  const [isTesting, setIsTesting] = useState(false)
+  const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null)
+  const [showRawSample, setShowRawSample] = useState(false)
+
+  const handleTestConnection = async () => {
+    setIsTesting(true)
+    setTestResult(null)
+    try {
+      const res = await testConnection()
+      setTestResult(res)
+    } catch (e: any) {
+      setTestResult({
+        success: false,
+        message: e.message || 'Connection test threw an unexpected error',
+      })
+    } finally {
+      setIsTesting(false)
+    }
+  }
 
   if (!isAdminDrawerOpen) return null
 
@@ -309,14 +331,43 @@ export default function AdminConfigDrawer() {
                 {wifiConfig.mode === 'LOCAL_HTTP' && (
                   <div className="space-y-3">
                     <div>
-                      <label style={{ color: colors.textSecondary }} className="block mb-1 text-[11px]">
-                        ESP32 Wi-Fi HTTP Endpoint URL
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label style={{ color: colors.textSecondary }} className="text-[11px]">
+                          ESP32 Wi-Fi HTTP Endpoint URL
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateWifiConfig({
+                                localIp: '10.50.134.121',
+                                localEndpoint: 'http://10.50.134.121/data',
+                              })
+                            }
+                            className="text-[10px] text-emerald-500 hover:underline font-bold"
+                          >
+                            Set 10.50.134.121
+                          </button>
+                          <span style={{ color: colors.border }}>•</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateWifiConfig({
+                                localIp: '192.168.1.150',
+                                localEndpoint: 'http://192.168.1.150/data',
+                              })
+                            }
+                            className="text-[10px] text-cyan-500 hover:underline font-bold"
+                          >
+                            192.168.1.150
+                          </button>
+                        </div>
+                      </div>
                       <input
                         type="text"
                         value={wifiConfig.localEndpoint}
                         onChange={(e) => updateWifiConfig({ localEndpoint: e.target.value })}
-                        placeholder="http://192.168.1.150/data"
+                        placeholder="http://10.50.134.121/data"
                         style={{
                           backgroundColor: colors.card,
                           borderColor: colors.border,
@@ -336,8 +387,15 @@ export default function AdminConfigDrawer() {
                       <input
                         type="text"
                         value={wifiConfig.localIp}
-                        onChange={(e) => updateWifiConfig({ localIp: e.target.value })}
-                        placeholder="192.168.1.150"
+                        onChange={(e) =>
+                          updateWifiConfig({
+                            localIp: e.target.value,
+                            localEndpoint: e.target.value.startsWith('http')
+                              ? e.target.value
+                              : `http://${e.target.value}/data`,
+                          })
+                        }
+                        placeholder="10.50.134.121"
                         style={{
                           backgroundColor: colors.card,
                           borderColor: colors.border,
@@ -384,7 +442,7 @@ export default function AdminConfigDrawer() {
                         type="text"
                         value={wifiConfig.websocketUrl}
                         onChange={(e) => updateWifiConfig({ websocketUrl: e.target.value })}
-                        placeholder="ws://192.168.1.150:81"
+                        placeholder="ws://10.50.134.121:81"
                         style={{
                           backgroundColor: colors.card,
                           borderColor: colors.border,
@@ -418,7 +476,23 @@ export default function AdminConfigDrawer() {
                     />
                   </div>
 
-                  <div className="flex items-end">
+                  <div className="flex items-end gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTestConnection}
+                      disabled={isTesting}
+                      style={{
+                        backgroundColor: colors.card,
+                        borderColor: colors.border,
+                        color: colors.textPrimary,
+                      }}
+                      className="flex-1 py-2.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 hover:border-emerald-500 transition-all disabled:opacity-50"
+                      title="Test endpoint ping & validate metrology JSON schema"
+                    >
+                      <Activity size={14} className={isTesting ? 'animate-pulse text-emerald-500' : 'text-emerald-500'} />
+                      <span>{isTesting ? 'Testing...' : 'Test Ping'}</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => triggerWifiPoll()}
@@ -427,13 +501,173 @@ export default function AdminConfigDrawer() {
                         backgroundColor: colors.accentEmerald,
                         color: '#FFFFFF',
                       }}
-                      className="w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all disabled:opacity-50"
+                      className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all disabled:opacity-50"
                     >
                       <RefreshCw size={14} className={isConnectingWifi ? 'animate-spin' : ''} />
-                      <span>{isConnectingWifi ? 'Querying...' : 'Poll Stream Now'}</span>
+                      <span>{isConnectingWifi ? 'Querying...' : 'Poll Stream'}</span>
                     </button>
                   </div>
                 </div>
+              </div>
+
+              {/* TELEMETRY SCHEMA & CONNECTION VALIDATOR CARD */}
+              <div
+                style={{
+                  backgroundColor: colors.subtle,
+                  borderColor: colors.border,
+                }}
+                className="rounded-xl border p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Activity size={16} style={{ color: colors.accentEmerald }} />
+                    <span style={{ color: colors.textPrimary }} className="font-bold">
+                      Connection & Schema Validator
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={isTesting}
+                    style={{
+                      backgroundColor: isTesting ? `${colors.accentEmerald}30` : `${colors.accentEmerald}15`,
+                      borderColor: `${colors.accentEmerald}40`,
+                      color: colors.accentEmerald,
+                    }}
+                    className="px-3 py-1.5 rounded-xl border font-bold text-xs flex items-center gap-1.5 hover:bg-emerald-500 hover:text-white transition-all disabled:opacity-50"
+                  >
+                    <RefreshCw size={12} className={isTesting ? 'animate-spin' : ''} />
+                    <span>{isTesting ? 'Validating Schema...' : 'Test Connection'}</span>
+                  </button>
+                </div>
+
+                <p style={{ color: colors.textMuted }} className="text-[11px]">
+                  Pings <code className="text-emerald-500">{wifiConfig.mode === 'LOCAL_HTTP' ? wifiConfig.localEndpoint || `http://${wifiConfig.localIp}/data` : wifiConfig.mode === 'CLOUD_FIREBASE' ? wifiConfig.firebaseUrl : wifiConfig.websocketUrl}</code>, calculates round-trip latency, and inspects metrology fields.
+                </p>
+
+                {/* Validation Result Box */}
+                {testResult ? (
+                  <div
+                    style={{
+                      backgroundColor: testResult.success ? `${colors.accentEmerald}10` : 'rgba(239, 68, 68, 0.1)',
+                      borderColor: testResult.success ? `${colors.accentEmerald}40` : 'rgba(239, 68, 68, 0.4)',
+                    }}
+                    className="rounded-xl border p-3.5 space-y-2.5 animate-in fade-in duration-150"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {testResult.success ? (
+                          <CheckCircle size={16} className="text-emerald-500 shrink-0" />
+                        ) : (
+                          <AlertTriangle size={16} className="text-rose-500 shrink-0" />
+                        )}
+                        <span
+                          className={`font-bold text-xs ${
+                            testResult.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                          }`}
+                        >
+                          {testResult.success ? 'Connection Verified & Schema Valid' : 'Endpoint Connection Failed'}
+                        </span>
+                      </div>
+                      {testResult.latencyMs !== undefined && (
+                        <span
+                          style={{
+                            backgroundColor: colors.card,
+                            borderColor: colors.border,
+                            color: colors.textSecondary,
+                          }}
+                          className="px-2 py-0.5 rounded text-[10px] font-mono border"
+                        >
+                          ⚡ {testResult.latencyMs} ms
+                        </span>
+                      )}
+                    </div>
+
+                    <p style={{ color: colors.textSecondary }} className="text-[11px] leading-relaxed">
+                      {testResult.message}
+                    </p>
+
+                    {/* Detected Metrology Fields Badges */}
+                    {testResult.schemaFields && testResult.schemaFields.length > 0 && (
+                      <div className="pt-1 space-y-1.5">
+                        <span style={{ color: colors.textMuted }} className="text-[10px] uppercase font-bold block">
+                          Detected Telemetry Keys ({testResult.schemaFields.length}):
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {testResult.schemaFields.map((field) => {
+                            const isMetrologyKey = [
+                              'vrms', 'voltage', 'v', 'ct', 'current', 'i', 'power', 'activewatts',
+                              'pf', 'powerfactor', 'frequency', 'freq', 'hz', 'opt_power', 'optwatts',
+                              'opt_kwh', 'optenergykwh', 'opt_pulses', 'optpulses', 'eeprom_backup',
+                              'status', 'thd', 'thdi', 'time'
+                            ].includes(field.toLowerCase())
+
+                            return (
+                              <span
+                                key={field}
+                                style={{
+                                  backgroundColor: isMetrologyKey ? `${colors.accentEmerald}20` : colors.card,
+                                  borderColor: isMetrologyKey ? `${colors.accentEmerald}50` : colors.border,
+                                  color: isMetrologyKey ? colors.accentEmerald : colors.textSecondary,
+                                }}
+                                className="px-2 py-0.5 rounded text-[10px] font-mono border flex items-center gap-1"
+                              >
+                                {isMetrologyKey && <span className="font-bold">✓</span>}
+                                <span>{field}</span>
+                              </span>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Raw Sample Toggle */}
+                    {testResult.rawSample && (
+                      <div className="pt-2 border-t" style={{ borderColor: `${colors.border}60` }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowRawSample(!showRawSample)}
+                          style={{ color: colors.accentCyan }}
+                          className="text-[11px] font-bold flex items-center gap-1 hover:underline"
+                        >
+                          <span>{showRawSample ? 'Hide Raw JSON Sample' : 'View Raw Validated JSON Sample'}</span>
+                          {showRawSample ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        </button>
+                        {showRawSample && (
+                          <pre
+                            style={{
+                              backgroundColor: colors.canvas,
+                              borderColor: colors.border,
+                              color: colors.accentCyan,
+                            }}
+                            className="mt-2 p-2.5 rounded-lg border text-[10px] overflow-x-auto max-h-40 font-mono"
+                          >
+                            {JSON.stringify(testResult.rawSample, null, 2)}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                      color: colors.textMuted,
+                    }}
+                    className="p-3 rounded-xl border text-[11px] flex items-center justify-between"
+                  >
+                    <span>Click "Test Connection" to ping target and inspect metrology payload.</span>
+                    <button
+                      type="button"
+                      onClick={handleTestConnection}
+                      className="text-xs font-bold text-emerald-500 hover:underline flex items-center gap-1"
+                    >
+                      <Activity size={12} />
+                      <span>Ping & Validate</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Meter Constant Selector & Calibration */}

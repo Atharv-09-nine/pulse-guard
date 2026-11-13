@@ -6,7 +6,24 @@ import LiveTelemetryChart from '../components/LiveTelemetryChart'
 import LiveEnergyFlowDiagram from '../components/LiveEnergyFlowDiagram'
 import EnergySourceCard from '../components/EnergySourceCard'
 import AddSourceModal from '../components/AddSourceModal'
-import { Zap, Activity, Compass, Waves, Plus, Layers, WifiOff, Wifi } from 'lucide-react'
+import GridHealthCard from '../components/GridHealthCard'
+import SanzoWadaNILMBreakdown from '../components/SanzoWadaNILMBreakdown'
+import {
+  Zap,
+  Activity,
+  IndianRupee,
+  Database,
+  ShieldCheck,
+  Plus,
+  Layers,
+  WifiOff,
+  Wifi,
+  Sparkles,
+  Cpu,
+  Clock,
+  Leaf,
+  Flame,
+} from 'lucide-react'
 
 export default function Dashboard() {
   const {
@@ -22,21 +39,23 @@ export default function Dashboard() {
 
   const [isAddSourceModalOpen, setIsAddSourceModalOpen] = useState(false)
 
-  const { voltage, current, powerFactor, frequency, apparentVA } = telemetry
-
+  const { activeWatts, totalKWh, opticalWatts, voltage } = telemetry
   const isConnected = wifiStatus === 'CONNECTED'
-  const isZeroBaseline = voltage === 0 && current === 0
 
-  // Voltage status check
-  const isOverVoltage = voltage >= 260.0
-  const isUnderVoltage = voltage <= 200.0 && voltage > 20.0
-  const voltageStatus = !isConnected
-    ? 'Awaiting Wi-Fi'
-    : isOverVoltage
-    ? 'High Voltage'
-    : isUnderVoltage
-    ? 'Low Voltage'
-    : 'Normal (230V)'
+  // Estimated Bill: opt_kwh × ₹8.00 formatted as ₹XX.XX
+  const optKWh = totalKWh || 0
+  const estimatedBillInr = (optKWh * 8.00).toFixed(2)
+
+  // Usage Indicator (Eco / Normal / Heavy)
+  const isEco = activeWatts < 500 && isConnected
+  const isHeavy = activeWatts > 2000 && isConnected
+  const usageLabel = !isConnected
+    ? 'Standby'
+    : isEco
+    ? 'Eco Usage'
+    : isHeavy
+    ? 'Heavy Draw'
+    : 'Normal Draw'
 
   return (
     <div className="space-y-6">
@@ -48,7 +67,7 @@ export default function Dashboard() {
             borderColor: `${colors.accentAmber}30`,
             color: colors.textPrimary,
           }}
-          className="rounded-2xl border p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono text-xs"
+          className="rounded-2xl border p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono text-xs shadow-sm"
         >
           <div className="flex items-center gap-3">
             <div className="size-8 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-500 flex items-center justify-center shrink-0">
@@ -62,232 +81,193 @@ export default function Dashboard() {
                 </span>
               </div>
               <p style={{ color: colors.textMuted }} className="text-[11px] mt-0.5">
-                No simulated data. Clean zero baseline active (0.0 V, 0 W, 0.00 kWh) until real telemetry packets arrive from ESP32.
+                Clean zero baseline active. Real telemetry will automatically stream from ESP32 at {wifiConfig.localIp || '10.50.134.121'}.
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <span style={{ color: colors.textMuted }} className="text-[10px]">
-              Receiver: {wifiConfig.mode === 'CLOUD_FIREBASE' ? 'Firebase Cloud' : wifiConfig.localEndpoint || `http://${wifiConfig.localIp}/data`}
+              Endpoint: {wifiConfig.localEndpoint || `http://${wifiConfig.localIp}/data`}
             </span>
           </div>
         </div>
       )}
 
-      {/* 4 Consumer-Friendly Live Cards: Voltage, Current, Power Factor, Frequency */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 font-mono">
-        {/* 1. Voltage */}
+      {/* TOP ROW: HERO METRICS (Home Load, Energy Consumed with EEPROM, Estimated Bill in INR) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 font-mono">
+        {/* HERO 1: Current Home Load */}
         <div
           style={{
             backgroundColor: colors.card,
             borderColor: colors.border,
             color: colors.textPrimary,
           }}
-          className="relative overflow-hidden rounded-2xl border p-5 shadow-lg transition-colors duration-200"
+          className="relative overflow-hidden rounded-2xl border p-5 shadow-lg flex flex-col justify-between transition-colors duration-200"
         >
           <div className="flex items-center justify-between">
             <span
               style={{ color: colors.textSecondary }}
-              className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5"
+              className="text-xs font-bold uppercase tracking-wider flex items-center gap-2"
             >
-              <Zap size={14} style={{ color: colors.accentCyan }} /> Mains Voltage
+              <Zap size={15} style={{ color: colors.accentCyan }} /> Current Home Load
             </span>
             <span
               style={{
-                backgroundColor: !isConnected
-                  ? `${colors.accentAmber}15`
-                  : isOverVoltage || isUnderVoltage
-                  ? `${colors.accentRose}20`
-                  : `${colors.accentEmerald}15`,
-                color: !isConnected
-                  ? colors.accentAmber
-                  : isOverVoltage || isUnderVoltage
-                  ? colors.accentRose
-                  : colors.accentEmerald,
-                borderColor: !isConnected
-                  ? `${colors.accentAmber}40`
-                  : isOverVoltage || isUnderVoltage
-                  ? `${colors.accentRose}40`
-                  : `${colors.accentEmerald}40`,
+                backgroundColor: isEco
+                  ? 'rgba(46, 125, 107, 0.15)'
+                  : isHeavy
+                  ? 'rgba(194, 65, 12, 0.15)'
+                  : `${colors.accentCyan}15`,
+                color: isEco ? '#2E7D6B' : isHeavy ? '#C2410C' : colors.accentCyan,
+                borderColor: isEco
+                  ? 'rgba(46, 125, 107, 0.35)'
+                  : isHeavy
+                  ? 'rgba(194, 65, 12, 0.35)'
+                  : `${colors.accentCyan}35`,
               }}
-              className="rounded-md px-2 py-0.5 text-[10px] font-bold border"
+              className="rounded-lg px-2.5 py-0.5 text-[10px] font-bold border flex items-center gap-1 uppercase"
             >
-              {voltageStatus}
+              {isEco && <Leaf size={11} />}
+              {isHeavy && <Flame size={11} />}
+              <span>{usageLabel}</span>
             </span>
           </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span style={{ color: colors.textPrimary }} className="text-3xl font-black">
-              {voltage.toFixed(1)}
+
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-4xl font-black tracking-tight" style={{ color: colors.textPrimary }}>
+              {activeWatts >= 1000 ? (activeWatts / 1000).toFixed(2) : activeWatts.toFixed(0)}
             </span>
-            <span style={{ color: colors.accentCyan }} className="text-sm font-bold">
-              V
+            <span style={{ color: colors.accentCyan }} className="text-base font-bold">
+              {activeWatts >= 1000 ? 'kW' : 'W'}
             </span>
           </div>
+
           <div
             style={{ borderColor: colors.border, color: colors.textMuted }}
             className="mt-4 pt-3 border-t flex items-center justify-between text-[11px]"
           >
-            <span>Grid Standard</span>
-            <span style={{ color: colors.textSecondary }} className="font-medium">
-              Nominal: 230 V
+            <span>Optical Meter Power:</span>
+            <span className="font-bold" style={{ color: colors.textSecondary }}>
+              {opticalWatts > 0 ? `${opticalWatts.toFixed(0)} W` : '0 W'}
             </span>
           </div>
         </div>
 
-        {/* 2. Current */}
+        {/* HERO 2: Total Energy Consumed (with persistent AT24C32 EEPROM Indicator) */}
         <div
           style={{
             backgroundColor: colors.card,
             borderColor: colors.border,
             color: colors.textPrimary,
           }}
-          className="relative overflow-hidden rounded-2xl border p-5 shadow-lg transition-colors duration-200"
+          className="relative overflow-hidden rounded-2xl border p-5 shadow-lg flex flex-col justify-between transition-colors duration-200"
         >
           <div className="flex items-center justify-between">
             <span
               style={{ color: colors.textSecondary }}
-              className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5"
+              className="text-xs font-bold uppercase tracking-wider flex items-center gap-2"
             >
-              <Activity size={14} style={{ color: colors.accentEmerald }} /> Line Current
+              <Activity size={15} style={{ color: colors.accentEmerald }} /> Total Energy Consumed
             </span>
             <span
               style={{
-                backgroundColor: isConnected ? `${colors.accentEmerald}15` : `${colors.textMuted}15`,
-                color: isConnected ? colors.accentEmerald : colors.textMuted,
-                borderColor: isConnected ? `${colors.accentEmerald}40` : `${colors.border}`,
+                backgroundColor: 'rgba(46, 125, 107, 0.15)',
+                color: '#2E7D6B',
+                borderColor: 'rgba(46, 125, 107, 0.35)',
               }}
-              className="rounded-md px-2 py-0.5 text-[10px] font-bold border"
+              className="rounded-lg px-2 py-0.5 text-[10px] font-bold border flex items-center gap-1"
+              title="AT24C32 EEPROM Non-Volatile Hardware Backup Active (Address 0x50)"
             >
-              {isConnected ? 'Optimal Load' : 'Zero Baseline'}
+              <Database size={11} />
+              <span>AT24C32 EEPROM</span>
             </span>
           </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span style={{ color: colors.textPrimary }} className="text-3xl font-black">
-              {current.toFixed(3)}
+
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-4xl font-black tracking-tight" style={{ color: colors.textPrimary }}>
+              {optKWh.toFixed(4)}
             </span>
-            <span style={{ color: colors.accentEmerald }} className="text-sm font-bold">
-              A
+            <span style={{ color: colors.accentEmerald }} className="text-base font-bold">
+              kWh
             </span>
           </div>
+
           <div
             style={{ borderColor: colors.border, color: colors.textMuted }}
             className="mt-4 pt-3 border-t flex items-center justify-between text-[11px]"
           >
-            <span>Apparent Power</span>
-            <span style={{ color: colors.textSecondary }} className="font-medium">
-              {apparentVA.toFixed(0)} VA
+            <span>Hardware Non-Volatile Backup:</span>
+            <span className="font-bold text-emerald-600 dark:text-emerald-400">
+              Persistent across outages
             </span>
           </div>
         </div>
 
-        {/* 3. Power Factor */}
+        {/* HERO 3: Estimated Bill (opt_kwh × ₹8.00 formatted as ₹XX.XX) */}
         <div
           style={{
             backgroundColor: colors.card,
             borderColor: colors.border,
             color: colors.textPrimary,
           }}
-          className="relative overflow-hidden rounded-2xl border p-5 shadow-lg transition-colors duration-200"
+          className="relative overflow-hidden rounded-2xl border p-5 shadow-lg flex flex-col justify-between transition-colors duration-200"
         >
           <div className="flex items-center justify-between">
             <span
               style={{ color: colors.textSecondary }}
-              className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5"
+              className="text-xs font-bold uppercase tracking-wider flex items-center gap-2"
             >
-              <Compass size={14} style={{ color: colors.accentAmber }} /> Power Factor
+              <IndianRupee size={15} style={{ color: colors.accentAmber }} /> Estimated Bill
             </span>
             <span
               style={{
-                backgroundColor: !isConnected
-                  ? `${colors.textMuted}15`
-                  : powerFactor >= 0.90
-                  ? `${colors.accentEmerald}15`
-                  : `${colors.accentAmber}15`,
-                color: !isConnected
-                  ? colors.textMuted
-                  : powerFactor >= 0.90
-                  ? colors.accentEmerald
-                  : colors.accentAmber,
-                borderColor: !isConnected
-                  ? `${colors.border}`
-                  : powerFactor >= 0.90
-                  ? `${colors.accentEmerald}40`
-                  : `${colors.accentAmber}40`,
+                backgroundColor: `${colors.accentAmber}15`,
+                color: colors.accentAmber,
+                borderColor: `${colors.accentAmber}30`,
               }}
-              className="rounded-md px-2 py-0.5 text-[10px] font-bold border"
+              className="rounded-lg px-2.5 py-0.5 text-[10px] font-bold border"
             >
-              {!isConnected ? 'Standby' : powerFactor >= 0.90 ? 'Grid Healthy' : 'Fair Efficiency'}
+              ₹8.00 / kWh
             </span>
           </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span style={{ color: colors.textPrimary }} className="text-3xl font-black">
-              {powerFactor.toFixed(2)}
-            </span>
-            <span style={{ color: colors.textMuted }} className="text-xs">
-              ({(powerFactor * 100).toFixed(0)}%)
-            </span>
-          </div>
-          <div
-            style={{ borderColor: colors.border, color: colors.textMuted }}
-            className="mt-4 pt-3 border-t flex items-center justify-between text-[11px]"
-          >
-            <span>cos φ Phase</span>
-            <span style={{ color: colors.textSecondary }} className="font-medium">
-              {isConnected ? 'Sync Locked' : 'Awaiting Flow'}
-            </span>
-          </div>
-        </div>
 
-        {/* 4. Frequency */}
-        <div
-          style={{
-            backgroundColor: colors.card,
-            borderColor: colors.border,
-            color: colors.textPrimary,
-          }}
-          className="relative overflow-hidden rounded-2xl border p-5 shadow-lg transition-colors duration-200"
-        >
-          <div className="flex items-center justify-between">
-            <span
-              style={{ color: colors.textSecondary }}
-              className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5"
-            >
-              <Waves size={14} style={{ color: colors.accentPurple }} /> Grid Frequency
+          <div className="mt-4 flex items-baseline gap-1">
+            <span style={{ color: colors.accentAmber }} className="text-3xl font-black">
+              ₹
             </span>
-            <span
-              style={{
-                backgroundColor: isConnected ? `${colors.accentPurple}15` : `${colors.textMuted}15`,
-                color: isConnected ? colors.accentPurple : colors.textMuted,
-                borderColor: isConnected ? `${colors.accentPurple}40` : `${colors.border}`,
-              }}
-              className="rounded-md px-2 py-0.5 text-[10px] font-bold border"
-            >
-              {isConnected ? '50 Hz Stable' : 'Standby'}
+            <span className="text-4xl font-black tracking-tight" style={{ color: colors.textPrimary }}>
+              {estimatedBillInr}
             </span>
           </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span style={{ color: colors.textPrimary }} className="text-3xl font-black">
-              {frequency.toFixed(2)}
-            </span>
-            <span style={{ color: colors.accentPurple }} className="text-sm font-bold">
-              Hz
-            </span>
-          </div>
+
           <div
             style={{ borderColor: colors.border, color: colors.textMuted }}
             className="mt-4 pt-3 border-t flex items-center justify-between text-[11px]"
           >
-            <span>Grid Sync</span>
-            <span style={{ color: colors.textSecondary }} className="font-medium">
-              {isConnected ? 'Locked ±0.03Hz' : 'Standby'}
+            <span>Billing Formula:</span>
+            <span className="font-bold" style={{ color: colors.textSecondary }}>
+              {optKWh.toFixed(2)} kWh × ₹8.00
             </span>
           </div>
         </div>
       </div>
 
-      {/* Main Centerpiece & Synchronous Waveform Stream */}
+      {/* SECOND ROW: Grid Health Card (Consumer Translation of Voltage) & Real-time Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Centerpiece: Schneider-Style Concentric Dual-Ring Power Gauge (Span 5) */}
+        {/* Grid Health Card (Span 5) */}
+        <div className="lg:col-span-5 flex flex-col justify-between">
+          <GridHealthCard telemetry={telemetry} isConnected={isConnected} />
+        </div>
+
+        {/* Real-Time Rolling Telemetry Chart (Span 7) */}
+        <div className="lg:col-span-7 flex flex-col">
+          <LiveTelemetryChart history={history} telemetry={telemetry} />
+        </div>
+      </div>
+
+      {/* THIRD ROW: Concentric Dual-Ring Power Gauge & Sanzo Wada Appliance Breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Schneider Concentric Dual-Ring Gauge (Span 5) */}
         <div className="lg:col-span-5 flex flex-col">
           <ConcentricDualRingGauge
             telemetry={telemetry}
@@ -295,15 +275,15 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Right: Real-Time Rolling Telemetry Chart & Appliance Breakdown (Span 7) */}
-        <div className="lg:col-span-7 flex flex-col gap-6">
-          <LiveTelemetryChart history={history} telemetry={telemetry} />
+        {/* Appliance Breakdown (Harmonics / NILM Translation in Sanzo Wada Donut + Cards) (Span 7) */}
+        <div className="lg:col-span-7 flex flex-col">
+          <SanzoWadaNILMBreakdown telemetry={telemetry} />
         </div>
       </div>
 
-      {/* MULTI-CT ENERGY SOURCE MONITORING SECTION */}
+      {/* FOURTH ROW: MULTI-CT ENERGY SOURCE MONITORING & FLOW */}
       <div className="space-y-6 pt-2">
-        {/* Live Energy Flow Diagram (Hero Summary) */}
+        {/* Live Energy Flow Diagram (Hero Routing Schematic) */}
         <LiveEnergyFlowDiagram />
 
         {/* Energy Source Cards Grid with "+ Add Source" Button */}

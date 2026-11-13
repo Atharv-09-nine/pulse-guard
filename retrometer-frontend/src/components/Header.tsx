@@ -1,4 +1,4 @@
-import { Menu, Lock, Unlock, LogOut, Radio, Zap, ShieldCheck, Wifi, WifiOff } from 'lucide-react'
+import { Menu, Lock, Unlock, LogOut, Radio, Zap, ShieldCheck, Wifi, WifiOff, RefreshCw } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { navItems } from './navItems'
 import { useTelemetry } from '../context/TelemetryContext'
@@ -21,7 +21,10 @@ export default function Header({ onMenuClick }: HeaderProps) {
     lockAdmin,
     wifiStatus,
     wifiConfig,
+    updateWifiConfig,
     lastPacketTime,
+    isConnectingWifi,
+    triggerWifiPoll,
   } = useTelemetry()
 
   const { user, logout } = useAuth()
@@ -33,6 +36,10 @@ export default function Header({ onMenuClick }: HeaderProps) {
     ) ?? navItems[0]
 
   const isConnected = wifiStatus === 'CONNECTED'
+  const targetLabel =
+    wifiConfig.mode === 'CLOUD_FIREBASE'
+      ? 'Cloud'
+      : wifiConfig.localIp || '10.50.134.121'
 
   return (
     <header
@@ -43,7 +50,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
       }}
       className="sticky top-0 z-20 border-b backdrop-blur-md transition-colors duration-200"
     >
-      <div className="flex min-h-[74px] items-center justify-between gap-3 px-4 sm:gap-5 sm:px-6">
+      <div className="flex min-h-[74px] items-center justify-between gap-3 px-4 sm:gap-4 sm:px-6">
         {/* Left: Mobile menu & Tab title */}
         <div className="flex items-center gap-3">
           <button
@@ -82,21 +89,75 @@ export default function Header({ onMenuClick }: HeaderProps) {
           </div>
         </div>
 
-        {/* Right: Wi-Fi status, Optical blinker, Consumer Meter, Theme Selector, Admin Lock, Sign Out */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* CONSUMER WI-FI TELEMETRY STATUS BADGE */}
+        {/* Right: ESP32 IP input, Wi-Fi status, Optical blinker, Theme Selector, Admin Lock, Sign Out */}
+        <div className="flex items-center gap-2 sm:gap-2.5">
+          {/* ESP32 IP INPUT FIELD (Default: 10.50.134.121) */}
           <div
             style={{
-              backgroundColor: isConnected ? `${colors.accentEmerald}15` : `${colors.accentAmber}15`,
-              borderColor: isConnected ? `${colors.accentEmerald}40` : `${colors.accentAmber}40`,
-              color: isConnected ? colors.accentEmerald : colors.accentAmber,
+              backgroundColor: colors.subtle,
+              borderColor: isConnected ? `${colors.accentEmerald}50` : colors.border,
+            }}
+            className="hidden lg:flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-mono transition-colors"
+            title="ESP32 Local Network IP for /data polling"
+          >
+            <span style={{ color: colors.textMuted }} className="text-[10px] uppercase font-bold">
+              IP:
+            </span>
+            <input
+              type="text"
+              value={wifiConfig.localIp}
+              onChange={(e) => {
+                const val = e.target.value.trim()
+                updateWifiConfig({
+                  localIp: val,
+                  localEndpoint: `http://${val}/data`,
+                })
+              }}
+              placeholder="10.50.134.121"
+              style={{
+                color: colors.textPrimary,
+              }}
+              className="bg-transparent w-28 text-xs font-bold focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => triggerWifiPoll()}
+              disabled={isConnectingWifi}
+              style={{ color: isConnected ? colors.accentEmerald : colors.accentAmber }}
+              className="p-0.5 hover:opacity-80 transition-opacity disabled:opacity-50"
+              title="Poll Telemetry Stream"
+            >
+              <RefreshCw size={12} className={isConnectingWifi ? 'animate-spin' : ''} />
+            </button>
+          </div>
+
+          {/* CONSUMER WI-FI TELEMETRY STATUS PILL */}
+          <div
+            style={{
+              backgroundColor: isConnected
+                ? `${colors.accentEmerald}15`
+                : isConnectingWifi
+                ? `${colors.accentAmber}15`
+                : `${colors.accentAmber}10`,
+              borderColor: isConnected
+                ? `${colors.accentEmerald}40`
+                : isConnectingWifi
+                ? `${colors.accentAmber}40`
+                : colors.border,
+              color: isConnected
+                ? colors.accentEmerald
+                : isConnectingWifi
+                ? colors.accentAmber
+                : colors.textSecondary,
             }}
             title={
               isConnected
-                ? `ESP32 Wi-Fi Connected • Mode: ${wifiConfig.mode} • Last: ${
+                ? `Connected • ${targetLabel} (${wifiConfig.mode}) • Last: ${
                     lastPacketTime ? new Date(lastPacketTime).toLocaleTimeString() : 'Active'
                   }`
-                : `Waiting for ESP32 Wi-Fi Telemetry stream (${wifiConfig.localEndpoint || wifiConfig.localIp})`
+                : isConnectingWifi
+                ? `Connecting to ${targetLabel}...`
+                : `Offline • Awaiting Wi-Fi Telemetry from ${targetLabel}`
             }
             className="flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-mono transition-all"
           >
@@ -107,15 +168,22 @@ export default function Header({ onMenuClick }: HeaderProps) {
                   <span className="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
                 </span>
                 <Wifi size={13} className="text-emerald-500" />
-                <span className="hidden md:inline font-bold">Wi-Fi: Connected</span>
-                <span className="md:hidden font-bold">Wi-Fi</span>
+                <span className="font-bold">
+                  <span className="hidden sm:inline">Connected • </span>
+                  <span>{targetLabel}</span>
+                </span>
+              </>
+            ) : isConnectingWifi ? (
+              <>
+                <span className="size-2 rounded-full bg-amber-400 animate-pulse"></span>
+                <RefreshCw size={13} className="text-amber-500 animate-spin" />
+                <span className="font-bold">Connecting...</span>
               </>
             ) : (
               <>
-                <span className="size-2 rounded-full bg-amber-400 animate-pulse"></span>
-                <WifiOff size={13} className="text-amber-500" />
-                <span className="hidden md:inline font-bold">Wi-Fi: Waiting</span>
-                <span className="md:hidden font-bold">Waiting</span>
+                <span className="size-2 rounded-full bg-amber-500/70"></span>
+                <WifiOff size={13} className="text-amber-500/80" />
+                <span className="font-bold">Offline</span>
               </>
             )}
           </div>
@@ -126,7 +194,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
               backgroundColor: colors.subtle,
               borderColor: colors.border,
             }}
-            className="flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-mono"
+            className="hidden sm:flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-mono"
           >
             <span
               className={`size-2.5 rounded-full transition-all duration-75 ${
@@ -135,24 +203,9 @@ export default function Header({ onMenuClick }: HeaderProps) {
                   : 'bg-emerald-950/60 border border-emerald-800'
               }`}
             />
-            <span className="hidden sm:inline" style={{ color: colors.textSecondary }}>
+            <span style={{ color: colors.textSecondary }}>
               Pulse: <strong style={{ color: colors.textPrimary }}>{telemetry.pulseIntervalMs}ms</strong>
             </span>
-            <span className="sm:hidden" style={{ color: colors.textSecondary }}>
-              <strong style={{ color: colors.textPrimary }}>{telemetry.pulseIntervalMs}ms</strong>
-            </span>
-          </div>
-
-          {/* Consumer Meter Badge */}
-          <div
-            style={{
-              backgroundColor: colors.subtle,
-              borderColor: colors.border,
-            }}
-            className="hidden xl:flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-mono"
-          >
-            <span style={{ color: colors.textMuted }}>Meter:</span>
-            <span className="font-bold">{user?.meterId || 'RM-3200-S3'}</span>
           </div>
 
           {/* THEME SELECTOR POPOVER TRIGGER */}

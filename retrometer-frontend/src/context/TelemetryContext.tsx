@@ -10,6 +10,14 @@ import type {
   RawWifiPacket,
 } from '../types/telemetry'
 
+export interface ConnectionTestResult {
+  success: boolean
+  message: string
+  latencyMs?: number
+  schemaFields?: string[]
+  rawSample?: any
+}
+
 interface TelemetryContextType {
   telemetry: TelemetryData
   history: TelemetryData[]
@@ -19,7 +27,7 @@ interface TelemetryContextType {
   triggerPulse: () => void
   resetPulseCount: () => void
 
-  // Wi-Fi Telemetry Receiver (ESP32 / Firebase / WebSocket)
+  // Native Wi-Fi Telemetry Engine
   wifiConfig: WifiReceiverConfig
   updateWifiConfig: (newConfig: Partial<WifiReceiverConfig>) => void
   wifiStatus: WifiStatus
@@ -28,8 +36,9 @@ interface TelemetryContextType {
   wifiLogs: string[]
   isConnectingWifi: boolean
   triggerWifiPoll: () => Promise<void>
+  testConnection: (customConfig?: WifiReceiverConfig) => Promise<ConnectionTestResult>
 
-  // Admin Passcode & Config Lock
+  // Admin Passcode & Drawer Lock
   isAdminUnlocked: boolean
   isAdminModalOpen: boolean
   isAdminDrawerOpen: boolean
@@ -39,7 +48,7 @@ interface TelemetryContextType {
   lockAdmin: () => void
   setMeterConstant: (constant: 3200 | 1600) => void
 
-  // Multi-CT Energy Sources (Shared Voltage Bus)
+  // Multi-CT Sources
   sources: EnergySource[]
   ctCalibrations: MultiCTChannelCalibration[]
   addSource: (newSource: {
@@ -63,27 +72,27 @@ interface TelemetryContextType {
   activeCTCount: number
 }
 
-// Strictly OFF by default: zero fake data on load
+// Zero fake data: simulator controls strictly off and bypassed
 const DEFAULT_SIMULATOR_CONTROLS: SimulatorControls = {
   active: false,
   loadWatts: 1850,
   powerFactor: 0.94,
   tamperDriftPercent: 0,
   gridNoise: false,
-  tariffRatePerKWh: 6.50,
+  tariffRatePerKWh: 8.00,
 }
 
 const DEFAULT_WIFI_CONFIG: WifiReceiverConfig = {
   mode: 'LOCAL_HTTP',
-  localIp: '192.168.1.150',
-  localEndpoint: 'http://192.168.1.150/data',
+  localIp: '10.50.134.121',
+  localEndpoint: 'http://10.50.134.121/data',
   firebaseUrl: 'https://retrometer-default-rtdb.firebaseio.com/telemetry.json',
-  websocketUrl: 'ws://192.168.1.150:81',
+  websocketUrl: 'ws://10.50.134.121:81',
   pollIntervalMs: 1000,
   autoConnect: true,
 }
 
-// Initial state has ONLY Utility Grid on CT-1 (No solar, No DG)
+// Initial state has ONLY 1 card: Utility Grid on CT-1
 const DEFAULT_INITIAL_SOURCES: EnergySource[] = [
   {
     id: 'src-grid',
@@ -99,12 +108,12 @@ const DEFAULT_INITIAL_SOURCES: EnergySource[] = [
     apparentVA: 0,
     todayKWh: 0.0,
     totalKWh: 0.0,
-    tariffRate: 6.50,
+    tariffRate: 8.00,
     calMultiplier: 1.000,
   },
 ]
 
-// Zero baseline when waiting for real Wi-Fi telemetry
+// Clean zeroed baseline metrics when waiting for Wi-Fi telemetry
 const ZERO_TELEMETRY: TelemetryData = {
   timestamp: Date.now(),
   rtcTime: 'Awaiting Wi-Fi Sync',
@@ -124,14 +133,23 @@ const ZERO_TELEMETRY: TelemetryData = {
   todayCostInr: 0.0,
   discrepancyPercent: 0,
   tamperSeverity: 'NORMAL',
-  tamperMessage: 'System Ready: Waiting for ESP32 Wi-Fi telemetry stream...',
+  tamperMessage: 'Awaiting Wi-Fi Telemetry: Listening for real ESP32 UDP/HTTP packet...',
   tamperDetected: false,
   thdPercent: 0.0,
   h3Percent: 0.0,
   h5Percent: 0.0,
   h7Percent: 0.0,
   gridStatus: 'NORMAL',
+  eepromBackup: true,
   loadBreakdown: {
+    heatingWatts: 0,
+    heatingPercent: 0,
+    electronicsWatts: 0,
+    electronicsPercent: 0,
+    coolingWatts: 0,
+    coolingPercent: 0,
+    vampireWatts: 0,
+    vampirePercent: 0,
     hvacWatts: 0,
     hvacPercent: 0,
     kitchenWatts: 0,
@@ -193,12 +211,11 @@ function getFormattedRtcTime(date = new Date()): string {
 const TelemetryContext = createContext<TelemetryContextType | undefined>(undefined)
 
 export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Test Signal Injector Controls (OFF by default)
   const [controls, setControls] = useState<SimulatorControls>(DEFAULT_SIMULATOR_CONTROLS)
   const [meterConstantVal, setMeterConstantVal] = useState<number>(3200)
   const [isPulseBlinking, setIsPulseBlinking] = useState(false)
 
-  // Wi-Fi Receiver State
+  // Wi-Fi Configuration
   const [wifiConfig, setWifiConfig] = useState<WifiReceiverConfig>(() => {
     try {
       const saved = localStorage.getItem('retrometer-wifi-config')
@@ -216,13 +233,12 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [lastPacketRaw, setLastPacketRaw] = useState<RawWifiPacket | null>(null)
   const [isConnectingWifi, setIsConnectingWifi] = useState(false)
   const [wifiLogs, setWifiLogs] = useState<string[]>([
-    '⚡ RetroMeter Real-Time Metrology Core Initialized.',
-    'Wi-Fi Telemetry Receiver active: Waiting for ESP32 packets.',
-    'Initial Configuration: Only Utility Grid (CT-1) configured.',
-    'Test Signal Injector: OFF (Zero baseline active until real telemetry arrives).',
+    '⚡ Native Wi-Fi Telemetry Receiver Initialized.',
+    'USB Serial & meterProxy.js bridge deprecated; direct 2.4GHz Wi-Fi active.',
+    'Initial Target: CT-1 Utility Grid (Mains). Awaiting ESP32 Wi-Fi packets.',
   ])
 
-  // Save Wi-Fi config to localStorage
+  // Persist Wi-Fi config
   useEffect(() => {
     try {
       localStorage.setItem('retrometer-wifi-config', JSON.stringify(wifiConfig))
@@ -236,14 +252,13 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false)
   const [isAdminDrawerOpen, setIsAdminDrawerOpen] = useState<boolean>(false)
 
-  // Energy Sources State (Only Utility Grid CT-1 by default, no solar/DG on clean load)
+  // Energy Sources State (Starts with ONLY CT-1 Utility Grid)
   const [sources, setSources] = useState<EnergySource[]>(() => {
     try {
       const saved = localStorage.getItem('retrometer-sources')
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out older hardcoded default demo sources (src-solar, src-dg) if they were legacy defaults
           const cleaned = parsed.filter(
             (s) => s.id === 'src-grid' || s.id.startsWith('src-user-') || s.ctChannel > 3
           )
@@ -251,7 +266,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
       }
     } catch (e) {
-      console.warn('Could not read retrometer-sources from localStorage', e)
+      console.warn('Could not read retrometer-sources', e)
     }
     return DEFAULT_INITIAL_SOURCES
   })
@@ -261,7 +276,6 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     initCTCalibrations(sources)
   )
 
-  // Sync sources changes to localStorage
   useEffect(() => {
     try {
       localStorage.setItem('retrometer-sources', JSON.stringify(sources))
@@ -276,6 +290,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const prevPulseCountRef = useRef<number>(0)
   const lastPacketTimestampRef = useRef<number>(0)
+  const wsRef = useRef<WebSocket | null>(null)
 
   const triggerPulse = useCallback(() => {
     setIsPulseBlinking(true)
@@ -287,27 +302,18 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       ...prev,
       pulseCount: 0,
       totalKWh: 0,
+      ctKWh: 0,
       todayCostInr: 0,
     }))
+    setSources((prev) =>
+      prev.map((s) => ({ ...s, todayKWh: 0, totalKWh: 0 }))
+    )
     setWifiLogs((prev) => [...prev.slice(-40), `[RESET] Energy & pulse counters zeroed at ${new Date().toLocaleTimeString()}`])
   }, [])
 
   const updateControls = useCallback((newControls: Partial<SimulatorControls>) => {
-    setControls((prev) => {
-      const updated = { ...prev, ...newControls }
-      if (newControls.active !== undefined) {
-        setWifiLogs((logs) => [
-          ...logs.slice(-40),
-          `[ADMIN] Test Signal Injector toggled: ${newControls.active ? 'ACTIVE (Synthetic Signals ON)' : 'OFF (Real Telemetry Enforced)'}`,
-        ])
-        if (!newControls.active && wifiStatus !== 'CONNECTED') {
-          // Revert to zeroed telemetry when test injector is disabled
-          setTelemetry(ZERO_TELEMETRY)
-        }
-      }
-      return updated
-    })
-  }, [wifiStatus])
+    setControls((prev) => ({ ...prev, ...newControls }))
+  }, [])
 
   const setMeterConstant = useCallback((constant: 3200 | 1600) => {
     setMeterConstantVal(constant)
@@ -319,9 +325,9 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setWifiConfig((prev) => ({ ...prev, ...newConfig }))
   }, [])
 
-  // Admin Passcode Lock Functions (Passcode: admin1234)
   const unlockAdmin = useCallback((passcode: string): boolean => {
-    if (passcode.trim() === 'admin1234') {
+    const p = passcode.trim()
+    if (p === 'admin' || p === 'admin1234') {
       setIsAdminUnlocked(true)
       setIsAdminModalOpen(false)
       setIsAdminDrawerOpen(true)
@@ -338,7 +344,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setWifiLogs((prev) => [...prev.slice(-40), `[AUTH] Admin Configuration Locked: Consumer Mode active.`])
   }, [])
 
-  // --- PARSE AND APPLY INCOMING WI-FI PACKET ---
+  // --- PARSE AND APPLY INCOMING WI-FI JSON PACKET ---
   const processIncomingPacket = useCallback((raw: RawWifiPacket) => {
     const now = Date.now()
     lastPacketTimestampRef.current = now
@@ -346,90 +352,135 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setLastPacketRaw(raw)
     setWifiStatus('CONNECTED')
 
-    // Voltage extraction
-    const v = raw.voltage ?? raw.vRMS ?? raw.v_rms ?? raw.v ?? 0
-    // Current extraction
-    const i = raw.current ?? raw.iRMS ?? raw.i_rms ?? raw.i1 ?? (raw.ct && raw.ct[0]?.current) ?? 0
-    // Power Factor
-    const pf = Math.max(0.0, Math.min(1.0, raw.pf ?? raw.powerFactor ?? (v > 0 && i > 0 && (raw.power ?? raw.activeWatts) ? (raw.power ?? raw.activeWatts)! / (v * i) : 0.94)))
-    // Active Watts
-    const p = raw.power ?? raw.activeWatts ?? raw.active_watts ?? raw.p ?? +(v * i * pf).toFixed(1)
-    // Apparent VA
-    const s = v > 0 && i > 0 ? +(v * i).toFixed(1) : +(p / (pf || 1.0)).toFixed(1)
-    // Reactive VAR
-    const varQ = Math.sqrt(Math.max(0, s * s - p * p))
+    // 1. Line Voltage (vRMS)
+    const v = raw.vRMS ?? raw.voltage ?? raw.v_rms ?? raw.v ?? 0
+
+    // 2. Multi-CT Channel 0 extraction (mapped to CT-1 Utility Grid)
+    let ct0Current = 0
+    let ct0Watts = 0
+    let ct0Pf = 0.94
+
+    if (Array.isArray(raw.ct) && raw.ct.length > 0) {
+      const first = raw.ct[0]
+      if (typeof first === 'number') {
+        ct0Current = first
+      } else if (typeof first === 'object' && first !== null) {
+        ct0Current = first.current ?? 0
+        if (first.power !== undefined) ct0Watts = first.power
+        if (first.pf !== undefined) ct0Pf = first.pf
+      }
+    } else {
+      ct0Current = raw.current ?? raw.iRMS ?? raw.i_rms ?? raw.i1 ?? 0
+    }
+
+    // Power factor (pf[] array or single pf)
+    if (Array.isArray(raw.pf) && raw.pf.length > 0) {
+      ct0Pf = raw.pf[0]
+    } else if (typeof raw.pf === 'number') {
+      ct0Pf = raw.pf
+    } else if (raw.powerFactor !== undefined) {
+      ct0Pf = raw.powerFactor
+    }
+
+    if (ct0Watts === 0 && v > 0 && ct0Current > 0) {
+      ct0Watts = raw.power ?? raw.activeWatts ?? raw.optWatts ?? +(v * ct0Current * ct0Pf).toFixed(1)
+    } else if (ct0Watts === 0 && raw.activeWatts !== undefined) {
+      ct0Watts = raw.activeWatts
+    } else if (ct0Watts === 0 && raw.power !== undefined) {
+      ct0Watts = raw.power
+    }
+
+    const mainActiveWatts = ct0Watts
+    const mainCurrent = ct0Current
+    const mainPf = Math.max(0.0, Math.min(1.0, ct0Pf || 0.94))
+    const apparentVA = v > 0 && mainCurrent > 0 ? +(v * mainCurrent).toFixed(1) : +(mainActiveWatts / (mainPf || 1.0)).toFixed(1)
+    const reactiveVAR = +Math.sqrt(Math.max(0, apparentVA * apparentVA - mainActiveWatts * mainActiveWatts)).toFixed(1)
+
     // Frequency
-    const freq = raw.frequency ?? raw.freq ?? (v > 20 ? 50.0 : 0.0)
+    const freq = raw.frequency ?? raw.freq ?? raw.hz ?? (v > 20 ? 50.0 : 0.0)
 
-    // Optical pulses & metrology
-    const pOpt = raw.opt_power ?? raw.opticalWatts ?? raw.optWatts ?? p
-    const pulses = raw.opt_pulses ?? raw.pulseCount ?? raw.optPulses ?? 0
+    // Optical Pulses & Energy
+    const pOpt = raw.optWatts ?? raw.opt_power ?? raw.opticalWatts ?? mainActiveWatts
+    const pulses = raw.optPulses ?? raw.opt_pulses ?? raw.pulseCount ?? 0
     const pulseInterval = raw.opt_interval ?? raw.pulseIntervalMs ?? (pOpt > 10 ? Math.round((3600 * 1000) / (meterConstantVal * (pOpt / 1000))) : 0)
-    const totKWh = raw.opt_kwh ?? raw.totalKWh ?? raw.optEnergyKWh ?? +(pulses / meterConstantVal).toFixed(4)
-    const ctKWhVal = raw.ct_kwh ?? raw.ctEnergyKWh ?? raw.ctKWh ?? totKWh
-    const costInr = +(totKWh * controls.tariffRatePerKWh).toFixed(2)
+    const totKWh = raw.optEnergyKWh ?? raw.opt_kwh ?? raw.totalKWh ?? +(pulses / meterConstantVal).toFixed(4)
+    const ctKWhVal = raw.ctEnergyKWh ?? raw.ct_kwh ?? raw.ctKWh ?? totKWh
+    const costInr = +(totKWh * 8.00).toFixed(2)
 
-    // Blink optical pulse LED if pulse count incremented
+    // Pulse LED blink trigger
     if (pulses > prevPulseCountRef.current && prevPulseCountRef.current > 0) {
       triggerPulse()
     }
     prevPulseCountRef.current = pulses
 
-    // Discrepancy analysis
-    let discPct = 0
-    if (p > 20) {
-      discPct = +(((p - pOpt) / p) * 100).toFixed(1)
-    }
-    const epsilon = Math.abs(discPct)
-    let tamperSeverity: 'NORMAL' | 'WARNING' | 'CRITICAL' = 'NORMAL'
-    let tamperDetected = false
-    let tamperMessage = 'Verified: Optical pulses match ADE7953 CT vector within ±2% metrology standard.'
+    // Harmonics (thdI / thd)
+    const thd = raw.thdI ?? raw.thd ?? raw.thdPercent ?? 1.8
+    const h3 = raw.h3 ?? raw.h3Percent ?? 0.8
+    const h5 = raw.h5 ?? raw.h5Percent ?? 0.5
+    const h7 = raw.h7 ?? raw.h7Percent ?? 0.3
 
-    if (epsilon > 10 || (p > 150 && pOpt < 10)) {
-      tamperSeverity = 'CRITICAL'
-      tamperDetected = true
-      tamperMessage = `Tamper Alert: Optical divergence is ${discPct}%. Pulse output throttled relative to line current!`
-    } else if (epsilon > 2) {
-      tamperSeverity = 'WARNING'
-      tamperMessage = `Notice: Minor vector divergence (${discPct}%) between ADE7953 CT and utility optical pulses.`
+    // Tamper Status
+    const rawTamper = raw.tamperStatus ?? raw.status ?? 'NORMAL'
+    let discPct = 0
+    if (mainActiveWatts > 20) {
+      discPct = +(((mainActiveWatts - pOpt) / mainActiveWatts) * 100).toFixed(1)
     }
+    const isCritical = rawTamper.toUpperCase().includes('CRITICAL') || rawTamper.toUpperCase().includes('TAMPER') || Math.abs(discPct) > 10
+    const isWarning = rawTamper.toUpperCase().includes('WARN') || Math.abs(discPct) > 2
+    const tamperSeverity = isCritical ? 'CRITICAL' : isWarning ? 'WARNING' : 'NORMAL'
+    const tamperDetected = isCritical
+    const tamperMessage = isCritical
+      ? `Tamper Alert: Optical divergence is ${discPct}%. Vector throttled relative to line current!`
+      : isWarning
+      ? `Notice: Minor divergence (${discPct}%) between CT and optical pulse sensor.`
+      : 'Verified: Optical pulses match ADE7953 CT vector within ±2% metrology standard.'
 
     // Grid Status
-    let gridStatus: 'NORMAL' | 'OVERVOLTAGE' | 'UNDERVOLTAGE' | 'TAMPER_ALERT' = (raw.status as any) || 'NORMAL'
+    let gridStatus: 'NORMAL' | 'OVERVOLTAGE' | 'UNDERVOLTAGE' | 'TAMPER_ALERT' = 'NORMAL'
     if (v >= 260.0) gridStatus = 'OVERVOLTAGE'
     else if (v <= 200.0 && v > 20.0) gridStatus = 'UNDERVOLTAGE'
     else if (tamperDetected) gridStatus = 'TAMPER_ALERT'
 
-    // Harmonic Spectrum
-    const thd = raw.thd ?? raw.thdPercent ?? 4.0
-    const h3 = raw.h3 ?? raw.h3Percent ?? 3.4
-    const h5 = raw.h5 ?? raw.h5Percent ?? 1.9
-    const h7 = raw.h7 ?? raw.h7Percent ?? 0.8
+    // NILM Heuristic Allocation (Sanzo Wada Categories)
+    let heatPct = 0, elecPct = 0, coolPct = 0, vampPct = 0
+    if (mainActiveWatts <= 0) {
+      heatPct = 0; elecPct = 0; coolPct = 0; vampPct = 0
+    } else if (mainActiveWatts < 50) {
+      vampPct = 100
+      heatPct = 0; elecPct = 0; coolPct = 0
+    } else {
+      vampPct = 6
+      const rem = 94
 
-    // NILM Load Breakdown
-    let hvacPct = 42, kitchenPct = 26, geyserPct = 18, basePct = 14
-    if (p < 400 && p > 0) {
-      basePct = 65; kitchenPct = 20; hvacPct = 15; geyserPct = 0
-    } else if (p > 3000) {
-      hvacPct = 52; geyserPct = 28; kitchenPct = 12; basePct = 8
-    } else if (p === 0) {
-      basePct = 0; kitchenPct = 0; hvacPct = 0; geyserPct = 0
+      if (thd < 2.0) {
+        heatPct = Math.round(rem * 0.65)
+        coolPct = Math.round(rem * 0.22)
+        elecPct = Math.max(0, rem - heatPct - coolPct)
+      } else if (h3 >= 2.0 || thd >= 2.0) {
+        elecPct = Math.round(rem * 0.58)
+        coolPct = Math.round(rem * 0.28)
+        heatPct = Math.max(0, rem - elecPct - coolPct)
+      } else {
+        coolPct = Math.round(rem * 0.45)
+        elecPct = Math.round(rem * 0.35)
+        heatPct = Math.max(0, rem - coolPct - elecPct)
+      }
     }
 
-    const hvacWatts = Math.round(p * (hvacPct / 100))
-    const kitchenWatts = Math.round(p * (kitchenPct / 100))
-    const geyserWatts = Math.round(p * (geyserPct / 100))
-    const baseWatts = Math.max(0, Math.round(p - (hvacWatts + kitchenWatts + geyserWatts)))
+    const heatWatts = Math.round(mainActiveWatts * (heatPct / 100))
+    const elecWatts = Math.round(mainActiveWatts * (elecPct / 100))
+    const coolWatts = Math.round(mainActiveWatts * (coolPct / 100))
+    const vampWatts = Math.max(0, Math.round(mainActiveWatts - (heatWatts + elecWatts + coolWatts)))
 
     const newPoint: TelemetryData = {
       timestamp: now,
       rtcTime: raw.time || raw.rtcTime || getFormattedRtcTime(new Date(now)),
       voltage: +v.toFixed(1),
-      current: +i.toFixed(3),
-      activeWatts: +p.toFixed(1),
-      apparentVA: +s.toFixed(1),
-      reactiveVAR: +varQ.toFixed(1),
-      powerFactor: +pf.toFixed(2),
+      current: +mainCurrent.toFixed(3),
+      activeWatts: +mainActiveWatts.toFixed(1),
+      apparentVA,
+      reactiveVAR,
+      powerFactor: +mainPf.toFixed(2),
       frequency: +freq.toFixed(2),
       meterConstant: meterConstantVal,
       pulseCount: pulses,
@@ -447,53 +498,74 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       h5Percent: +h5.toFixed(1),
       h7Percent: +h7.toFixed(1),
       gridStatus,
+      eepromBackup: raw.eeprom_backup ?? true,
       loadBreakdown: {
-        hvacWatts,
-        hvacPercent: hvacPct,
-        kitchenWatts,
-        kitchenPercent: kitchenPct,
-        geyserWatts,
-        geyserPercent: geyserPct,
-        baseWatts,
-        basePercent: basePct,
+        heatingWatts: heatWatts,
+        heatingPercent: heatPct,
+        electronicsWatts: elecWatts,
+        electronicsPercent: elecPct,
+        coolingWatts: coolWatts,
+        coolingPercent: coolPct,
+        vampireWatts: vampWatts,
+        vampirePercent: vampPct,
+        hvacWatts: coolWatts,
+        hvacPercent: coolPct,
+        kitchenWatts: heatWatts,
+        kitchenPercent: heatPct,
+        geyserWatts: elecWatts,
+        geyserPercent: elecPct,
+        baseWatts: vampWatts,
+        basePercent: vampPct,
       },
-      waveform: generateWaveform(v, i, pf),
+      waveform: generateWaveform(v, mainCurrent, mainPf),
     }
 
     setTelemetry(newPoint)
     setHistory((prev) => [...prev.slice(-40), newPoint])
 
-    // Update Multi-CT Sources dynamically based on incoming channel data
+    // --- PAYLOAD MAPPING: Map ct[0] to Utility Grid & ct[1..n] dynamically to user sources ---
     setSources((prevSources) => {
       return prevSources.map((source) => {
         if (!source.active) return { ...source, current: 0, activeWatts: 0, apparentVA: 0 }
 
         let chCurrent = 0
         let chWatts = 0
-        let chPF = source.powerFactor || pf
+        let chPf = source.powerFactor || mainPf
 
-        // 1. Check if packet has explicit multi-channel array 'ct'
-        if (Array.isArray(raw.ct)) {
-          const match = raw.ct.find((c) => c.channel === source.ctChannel)
-          if (match) {
-            chCurrent = match.current ?? chCurrent
-            chWatts = match.power ?? +(v * chCurrent * (match.pf || pf)).toFixed(1)
-            chPF = match.pf ?? chPF
-          }
+        // 1. CT-1 (Utility Grid) ALWAYS maps to ct[0] (or direct current/power)
+        if (source.ctChannel === 1 || source.id === 'src-grid') {
+          chCurrent = mainCurrent
+          chWatts = mainActiveWatts
+          chPf = mainPf
         }
-        // 2. Check channel-keyed properties (i1, i2, i3, ct1, ct2...)
-        else if ((raw as any)[`i${source.ctChannel}`] !== undefined) {
+        // 2. User-added sources dynamically bind to ct[1..n]
+        else if (Array.isArray(raw.ct)) {
+          const ctIdx = source.ctChannel - 1
+          if (ctIdx < raw.ct.length) {
+            const item = raw.ct[ctIdx]
+            if (typeof item === 'number') {
+              chCurrent = item
+              chWatts = +(v * chCurrent * chPf).toFixed(1)
+            } else if (typeof item === 'object' && item !== null) {
+              chCurrent = item.current ?? 0
+              chWatts = item.power ?? +(v * chCurrent * (item.pf || chPf)).toFixed(1)
+              if (item.pf !== undefined) chPf = item.pf
+            }
+          } else {
+            // Channel object search
+            const match = raw.ct.find((c) => typeof c === 'object' && c !== null && c.channel === source.ctChannel) as any
+            if (match) {
+              chCurrent = match.current ?? 0
+              chWatts = match.power ?? +(v * chCurrent * (match.pf || chPf)).toFixed(1)
+              if (match.pf !== undefined) chPf = match.pf
+            }
+          }
+        } else if ((raw as any)[`i${source.ctChannel}`] !== undefined) {
           chCurrent = (raw as any)[`i${source.ctChannel}`]
-          chWatts = +(v * chCurrent * chPF).toFixed(1)
+          chWatts = +(v * chCurrent * chPf).toFixed(1)
         } else if ((raw as any)[`ct${source.ctChannel}`] !== undefined) {
           chCurrent = (raw as any)[`ct${source.ctChannel}`]
-          chWatts = +(v * chCurrent * chPF).toFixed(1)
-        }
-        // 3. Fallback for CT-1 (Utility Grid) when only single-phase telemetry is transmitted
-        else if (source.ctChannel === 1) {
-          chCurrent = i
-          chWatts = p
-          chPF = pf
+          chWatts = +(v * chCurrent * chPf).toFixed(1)
         }
 
         const calMul = source.calMultiplier || 1.0
@@ -506,7 +578,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           ...source,
           voltage: +v.toFixed(1),
           current: +chCurrent.toFixed(2),
-          powerFactor: +chPF.toFixed(2),
+          powerFactor: +chPf.toFixed(2),
           activeWatts: activeWattsCalc,
           apparentVA: apparentVACalc,
           todayKWh: todayKWh > 0 ? todayKWh : source.todayKWh,
@@ -514,18 +586,27 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
       })
     })
-  }, [meterConstantVal, controls.tariffRatePerKWh, triggerPulse])
+  }, [meterConstantVal, triggerPulse])
 
-  // --- WI-FI POLLING TRIGGER ---
+  // --- NATIVE WI-FI CLIENT (LOCAL HTTP / WEBSOCKET / CLOUD FIREBASE) ---
   const triggerWifiPoll = useCallback(async () => {
     setIsConnectingWifi(true)
     try {
       if (wifiConfig.mode === 'LOCAL_HTTP') {
         const targetUrl = wifiConfig.localEndpoint || `http://${wifiConfig.localIp}/data`
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 2500)
+        const timeoutId = setTimeout(() => controller.abort(), 2000)
 
-        const res = await fetch(targetUrl, { signal: controller.signal })
+        let res: Response
+        try {
+          // Attempt via Vite proxy first to prevent browser CORS blocks
+          const proxyUrl = `/api/proxy?target=${encodeURIComponent(targetUrl)}`
+          res = await fetch(proxyUrl, { signal: controller.signal })
+          if (!res.ok) throw new Error(`Proxy HTTP ${res.status}`)
+        } catch {
+          // Fallback direct fetch
+          res = await fetch(targetUrl, { signal: controller.signal })
+        }
         clearTimeout(timeoutId)
 
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
@@ -533,7 +614,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         processIncomingPacket(data)
         setWifiLogs((logs) => [
           ...logs.slice(-40),
-          `[WIFI-HTTP] Received packet from ${targetUrl} (V:${data.voltage || data.vRMS || 0}V, P:${data.power || data.activeWatts || 0}W)`,
+          `[WIFI-HTTP] Synced payload from ${targetUrl} (V:${data.vRMS || data.voltage || 0}V, P:${data.power || data.activeWatts || 0}W)`,
         ])
       } else if (wifiConfig.mode === 'CLOUD_FIREBASE') {
         const targetUrl = wifiConfig.firebaseUrl
@@ -550,30 +631,72 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           processIncomingPacket(data)
           setWifiLogs((logs) => [
             ...logs.slice(-40),
-            `[WIFI-CLOUD] Synced telemetry from Firebase Realtime DB.`,
+            `[WIFI-CLOUD] Synced payload from Firebase Realtime DB.`,
           ])
         }
       }
     } catch (err: any) {
-      const isAbort = err.name === 'AbortError'
-      const errMsg = isAbort ? 'Connection Timed Out' : err.message || 'Offline'
-      // Only set offline if no packet received within the last 4 seconds
-      if (Date.now() - lastPacketTimestampRef.current > 4000) {
-        setWifiStatus('WAITING')
-      }
+      const errMsg = err.message || 'Offline'
       setWifiLogs((logs) => [
         ...logs.slice(-40),
-        `[WIFI-WARN] Polling failed (${errMsg}). Waiting for telemetry...`,
+        `[WIFI-WARN] Polling failed (${errMsg}).`,
       ])
     } finally {
       setIsConnectingWifi(false)
     }
   }, [wifiConfig, processIncomingPacket])
 
-  // --- RECURRING WI-FI RECEIVER POLLING LOOP ---
+  // --- WEBSOCKET CLIENT ---
   useEffect(() => {
-    if (!wifiConfig.autoConnect) {
-      setWifiStatus('OFFLINE')
+    if (wifiConfig.mode !== 'WEBSOCKET' || !wifiConfig.autoConnect) {
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+      return
+    }
+
+    const wsUrl = wifiConfig.websocketUrl || `ws://${wifiConfig.localIp}:81`
+    setWifiLogs((logs) => [...logs.slice(-40), `[WEBSOCKET] Connecting to ${wsUrl}...`])
+
+    try {
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        setWifiStatus('CONNECTED')
+        setWifiLogs((logs) => [...logs.slice(-40), `[WEBSOCKET] Connected to ${wsUrl}`])
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          processIncomingPacket(data)
+        } catch (e) {
+          console.warn('WebSocket invalid JSON', e)
+        }
+      }
+
+      ws.onerror = () => {
+        setWifiLogs((logs) => [...logs.slice(-40), `[WEBSOCKET] Socket error on ${wsUrl}`])
+      }
+
+      ws.onclose = () => {
+        setWifiLogs((logs) => [...logs.slice(-40), `[WEBSOCKET] Connection closed`])
+      }
+
+      return () => {
+        ws.close()
+        wsRef.current = null
+      }
+    } catch (e: any) {
+      console.warn('WebSocket connection init failed', e)
+    }
+  }, [wifiConfig.mode, wifiConfig.websocketUrl, wifiConfig.localIp, wifiConfig.autoConnect, processIncomingPacket])
+
+  // --- RECURRING POLLING ENGINE ---
+  useEffect(() => {
+    if (!wifiConfig.autoConnect || wifiConfig.mode === 'WEBSOCKET') {
       return
     }
 
@@ -581,132 +704,195 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     triggerWifiPoll()
 
     const interval = setInterval(() => {
-      // If Test Signal Injector is ACTIVE, do not poll to avoid overwriting test data
-      if (controls.active) return
       triggerWifiPoll()
     }, Math.max(800, wifiConfig.pollIntervalMs || 1000))
 
     return () => clearInterval(interval)
-  }, [wifiConfig, controls.active, triggerWifiPoll])
+  }, [wifiConfig.mode, wifiConfig.autoConnect, wifiConfig.pollIntervalMs, triggerWifiPoll])
 
-  // --- TEST SIGNAL INJECTOR ENGINE (ADMIN ONLY, OFF BY DEFAULT) ---
+  // --- 5-SECOND WATCHDOG & RECONNECTION ---
+  // If no valid JSON arrives within 5 seconds: mark Offline/Stale, reset instantaneous metrics to 0 while PRESERVING cumulative kWh!
   useEffect(() => {
-    // Strictly runs ONLY when explicitly enabled by Admin
-    if (!controls.active) return
+    const watchdogInterval = setInterval(() => {
+      if (lastPacketTimestampRef.current > 0 && Date.now() - lastPacketTimestampRef.current > 5000) {
+        if (wifiStatus !== 'OFFLINE') {
+          setWifiStatus('OFFLINE')
+          setWifiLogs((logs) => [
+            ...logs.slice(-40),
+            `[WATCHDOG] No telemetry received in >5s. Connection marked Offline. Resetting instantaneous metrics to 0 (Cumulative kWh preserved).`,
+          ])
 
-    const intervalId = setInterval(() => {
-      const now = Date.now()
-      const noise = controls.gridNoise ? (Math.random() - 0.5) : 0
+          // Zero instantaneous measurements; PRESERVE totalKWh & todayKWh!
+          setTelemetry((prev) => ({
+            ...prev,
+            voltage: 0,
+            current: 0,
+            activeWatts: 0,
+            apparentVA: 0,
+            reactiveVAR: 0,
+            powerFactor: 0,
+            frequency: 0,
+            opticalWatts: 0,
+            pulseIntervalMs: 0,
+            totalKWh: prev.totalKWh,
+            ctKWh: prev.ctKWh,
+            todayCostInr: prev.todayCostInr,
+            tamperMessage: 'Awaiting Wi-Fi Telemetry: Stream Offline (Previous kWh preserved)',
+            loadBreakdown: {
+              heatingWatts: 0,
+              heatingPercent: 0,
+              electronicsWatts: 0,
+              electronicsPercent: 0,
+              coolingWatts: 0,
+              coolingPercent: 0,
+              vampireWatts: 0,
+              vampirePercent: 0,
+              hvacWatts: 0,
+              hvacPercent: 0,
+              kitchenWatts: 0,
+              kitchenPercent: 0,
+              geyserWatts: 0,
+              geyserPercent: 0,
+              baseWatts: 0,
+              basePercent: 0,
+            },
+            waveform: [],
+          }))
 
-      const timeSec = now / 1000
-      const baseV = 230.2 + Math.sin(timeSec / 8) * 1.4 + noise * 0.6
-      const voltage = +baseV.toFixed(1)
-
-      const pElecBase = controls.loadWatts + noise * 12
-      const activeWatts = Math.max(0, +pElecBase.toFixed(1))
-      const driftMult = 1 - controls.tamperDriftPercent / 100
-      const opticalWatts = Math.max(0, +(activeWatts * driftMult).toFixed(1))
-      const pf = Math.max(0.65, Math.min(1.0, +(controls.powerFactor + noise * 0.005).toFixed(2)))
-      const frequency = +(50.0 + Math.sin(timeSec / 4) * 0.03 + noise * 0.01).toFixed(2)
-
-      const apparentVA = activeWatts > 0 ? +(activeWatts / pf).toFixed(1) : 0
-      const current = voltage > 0 ? +(apparentVA / voltage).toFixed(3) : 0
-      const reactiveVAR = +Math.sqrt(Math.max(0, apparentVA * apparentVA - activeWatts * activeWatts)).toFixed(1)
-
-      let discPct = 0
-      if (activeWatts > 20) {
-        discPct = +(((activeWatts - opticalWatts) / activeWatts) * 100).toFixed(1)
+          // Also zero source instantaneous currents/watts while preserving todayKWh & totalKWh!
+          setSources((prev) =>
+            prev.map((s) => ({
+              ...s,
+              voltage: 0,
+              current: 0,
+              activeWatts: 0,
+              apparentVA: 0,
+            }))
+          )
+        }
       }
-      const epsilon = Math.abs(discPct)
-      let tamperSeverity: 'NORMAL' | 'WARNING' | 'CRITICAL' = 'NORMAL'
-      let tamperMessage = 'Verified: Optical pulses match ADE7953 CT vector within ±2% metrology standard.'
-      let tamperDetected = false
+    }, 1000)
 
-      if (epsilon > 10 || (activeWatts > 150 && opticalWatts < 10)) {
-        tamperSeverity = 'CRITICAL'
-        tamperDetected = true
-        tamperMessage = `Tamper Alert: Optical divergence is ${discPct}%. Pulse output throttled relative to line current!`
-      } else if (epsilon > 2) {
-        tamperSeverity = 'WARNING'
-        tamperMessage = `Notice: Minor vector divergence (${discPct}%) between ADE7953 CT and utility optical pulses.`
+    return () => clearInterval(watchdogInterval)
+  }, [wifiStatus])
+
+  // --- TEST CONNECTION & SCHEMA VALIDATION ---
+  const testConnection = useCallback(
+    async (customConfig?: WifiReceiverConfig): Promise<ConnectionTestResult> => {
+      const targetConfig = customConfig || wifiConfig
+      const startTime = performance.now()
+
+      try {
+        let rawData: any = null
+
+        if (targetConfig.mode === 'LOCAL_HTTP') {
+          const url = targetConfig.localEndpoint || `http://${targetConfig.localIp}/data`
+          const controller = new AbortController()
+          const timeout = setTimeout(() => controller.abort(), 2500)
+
+          let res: Response
+          try {
+            const proxyUrl = `/api/proxy?target=${encodeURIComponent(url)}`
+            res = await fetch(proxyUrl, { signal: controller.signal })
+            if (!res.ok) throw new Error(`Proxy status ${res.status}`)
+          } catch {
+            res = await fetch(url, { signal: controller.signal })
+          }
+          clearTimeout(timeout)
+
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+          rawData = await res.json()
+        } else if (targetConfig.mode === 'CLOUD_FIREBASE') {
+          const url = targetConfig.firebaseUrl
+          if (!url) throw new Error('Firebase URL is required')
+          const controller = new AbortController()
+          const timeout = setTimeout(() => controller.abort(), 3000)
+
+          const res = await fetch(url, { signal: controller.signal })
+          clearTimeout(timeout)
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+          rawData = await res.json()
+        } else if (targetConfig.mode === 'WEBSOCKET') {
+          const wsUrl = targetConfig.websocketUrl || `ws://${targetConfig.localIp}:81`
+          return new Promise((resolve) => {
+            try {
+              const testWs = new WebSocket(wsUrl)
+              const timer = setTimeout(() => {
+                testWs.close()
+                resolve({
+                  success: false,
+                  message: `WebSocket connection to ${wsUrl} timed out after 3s`,
+                })
+              }, 3000)
+
+              testWs.onopen = () => {
+                clearTimeout(timer)
+                testWs.close()
+                resolve({
+                  success: true,
+                  message: `WebSocket handshake verified on ${wsUrl}`,
+                  latencyMs: Math.round(performance.now() - startTime),
+                })
+              }
+
+              testWs.onerror = () => {
+                clearTimeout(timer)
+                resolve({
+                  success: false,
+                  message: `WebSocket handshake refused on ${wsUrl}`,
+                })
+              }
+            } catch (err: any) {
+              resolve({
+                success: false,
+                message: `WebSocket init error: ${err.message}`,
+              })
+            }
+          })
+        }
+
+        const latencyMs = Math.round(performance.now() - startTime)
+        if (!rawData || typeof rawData !== 'object') {
+          return {
+            success: false,
+            message: 'Endpoint replied, but body was not a valid JSON object.',
+            latencyMs,
+          }
+        }
+
+        // Schema field detection
+        const fields = Object.keys(rawData)
+        const hasVoltage = 'vRMS' in rawData || 'voltage' in rawData
+        const hasCurrentOrCt = 'ct' in rawData || 'current' in rawData
+        const hasFrequency = 'frequency' in rawData || 'freq' in rawData || 'hz' in rawData
+
+        if (!hasVoltage && !hasCurrentOrCt) {
+          return {
+            success: true,
+            message: `JSON received (${latencyMs}ms), but missing standard metrology fields (vRMS / voltage / ct).`,
+            latencyMs,
+            schemaFields: fields,
+            rawSample: rawData,
+          }
+        }
+
+        return {
+          success: true,
+          message: `Valid Telemetry Schema! Detected ${fields.length} fields (${latencyMs}ms latency).`,
+          latencyMs,
+          schemaFields: fields,
+          rawSample: rawData,
+        }
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err.message || 'Connection failed or timed out.',
+          latencyMs: Math.round(performance.now() - startTime),
+        }
       }
-
-      let gridStatus: 'NORMAL' | 'OVERVOLTAGE' | 'UNDERVOLTAGE' | 'TAMPER_ALERT' = 'NORMAL'
-      if (voltage >= 260.0) gridStatus = 'OVERVOLTAGE'
-      else if (voltage <= 200.0 && voltage > 20.0) gridStatus = 'UNDERVOLTAGE'
-      else if (tamperDetected) gridStatus = 'TAMPER_ALERT'
-
-      const kw = opticalWatts / 1000
-      const pulseIntervalMs = kw > 0.005 ? Math.round((3600 * 1000) / (meterConstantVal * kw)) : 0
-
-      let hvacPct = 42, kitchenPct = 26, geyserPct = 18, basePct = 14
-      if (activeWatts < 400) {
-        basePct = 65; kitchenPct = 20; hvacPct = 15; geyserPct = 0
-      } else if (activeWatts > 3000) {
-        hvacPct = 52; geyserPct = 28; kitchenPct = 12; basePct = 8
-      }
-
-      const hvacWatts = Math.round(activeWatts * (hvacPct / 100))
-      const kitchenWatts = Math.round(activeWatts * (kitchenPct / 100))
-      const geyserWatts = Math.round(activeWatts * (geyserPct / 100))
-      const baseWatts = Math.max(0, Math.round(activeWatts - (hvacWatts + kitchenWatts + geyserWatts)))
-
-      const testPoint: TelemetryData = {
-        timestamp: now,
-        rtcTime: getFormattedRtcTime(new Date(now)),
-        voltage,
-        current,
-        activeWatts,
-        apparentVA,
-        reactiveVAR,
-        powerFactor: pf,
-        frequency,
-        meterConstant: meterConstantVal,
-        pulseCount: 15420,
-        opticalWatts,
-        pulseIntervalMs,
-        totalKWh: 4.8214,
-        ctKWh: 4.8214,
-        todayCostInr: +(4.8214 * controls.tariffRatePerKWh).toFixed(2),
-        discrepancyPercent: discPct,
-        tamperSeverity,
-        tamperMessage,
-        tamperDetected,
-        thdPercent: 4.0,
-        h3Percent: 3.4,
-        h5Percent: 1.9,
-        h7Percent: 0.8,
-        gridStatus,
-        loadBreakdown: {
-          hvacWatts,
-          hvacPercent: hvacPct,
-          kitchenWatts,
-          kitchenPercent: kitchenPct,
-          geyserWatts,
-          geyserPercent: geyserPct,
-          baseWatts,
-          basePercent: basePct,
-        },
-        waveform: generateWaveform(voltage, current, pf),
-      }
-
-      setTelemetry(testPoint)
-      setHistory((prev) => [...prev.slice(-40), testPoint])
-
-      // Update source cards for test
-      setSources((prev) =>
-        prev.map((s) => ({
-          ...s,
-          voltage,
-          current: s.active ? (s.preset === 'grid' ? current : 3.5) : 0,
-          activeWatts: s.active ? (s.preset === 'grid' ? activeWatts : 800) : 0,
-          apparentVA: s.active ? apparentVA : 0,
-        }))
-      )
-    }, 250)
-
-    return () => clearInterval(intervalId)
-  }, [controls, meterConstantVal])
+    },
+    [wifiConfig]
+  )
 
   // --- MULTI-CT SOURCE METHODS ---
   const addSource = useCallback((newSource: {
@@ -722,7 +908,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const id = `src-user-${Date.now()}`
     const defaultCurrent = newSource.current ?? (newSource.isProducer ? 3.5 : 4.0)
     const pf = newSource.powerFactor ?? 0.95
-    const tariffRate = newSource.tariffRate ?? 6.50
+    const tariffRate = newSource.tariffRate ?? 8.00
     const calMult = newSource.calMultiplier ?? 1.000
 
     setSources((prev) => {
@@ -756,7 +942,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     setWifiLogs((prev) => [
       ...prev.slice(-40),
-      `[USER] Added Source "${newSource.name}" on CT-${newSource.ctChannel} (${newSource.isProducer ? 'Producer' : 'Consumer'})`,
+      `[USER] Added Source "${newSource.name}" on CT-${newSource.ctChannel}`,
     ])
   }, [telemetry.voltage])
 
@@ -769,7 +955,6 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const removeSource = useCallback((id: string) => {
     setSources((prev) => {
       const target = prev.find((s) => s.id === id)
-      // Never allow deletion of CT-1 Utility Grid
       if (target && (target.ctChannel === 1 || target.id === 'src-grid')) {
         alert('Cannot remove the primary Utility Grid meter on CT-1.')
         return prev
@@ -847,7 +1032,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         triggerPulse,
         resetPulseCount,
 
-        // Wi-Fi Telemetry Receiver
+        // Native Wi-Fi Telemetry Engine
         wifiConfig,
         updateWifiConfig,
         wifiStatus,
@@ -856,6 +1041,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         wifiLogs,
         isConnectingWifi,
         triggerWifiPoll,
+        testConnection,
 
         // Admin Passcode Lock
         isAdminUnlocked,

@@ -2,6 +2,7 @@ import {
   Zap,
   DollarSign,
   ShieldCheck,
+  Cpu,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -43,5 +44,14 @@ export const navItems: NavItem[] = [
     subtitle: 'Optical-electrical alignment verification, grid voltage stability & security seals',
     icon: ShieldCheck,
     badge: 'VERIFIED',
+  },
+  {
+    to: '/dashboard/engineering',
+    label: 'Engineering (ESP32)',
+    tabIndex: 4,
+    title: 'PulseGuard Engineering View',
+    subtitle: 'ESP32 & ADE7953 architecture, GPIO pinout & persistent AT24C32 EEPROM bus',
+    icon: Cpu,
+    badge: 'HW',
   },
 ]
