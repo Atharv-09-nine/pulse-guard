@@ -1,78 +1,76 @@
-# React + TypeScript + Vite
+# ⚡ PulseGuard — Web Client & Telemetry Cloud Bridge
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> **High-Performance React 19 + TypeScript Dashboard and Zero-Dependency SSE Streaming Server for the PulseGuard System.**
 
-Currently, two official plugins are available:
+For full system architecture, firmware formulas, hardware pinout, and wiring diagrams, see the primary [Root Documentation](../README.md).
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 🚀 Quick Start
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
-
-Note: This will impact Vite dev & build performances.
-You can also try [the experimental native React Compiler support in plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md#rust-react-compiler) by using `compiler: true` in the plugin options instead of using the Babel plugin.
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+### 1. Install Dependencies
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+### 2. Development Mode
+To start the local Vite development server on port `5174`:
+```bash
+npm run dev -- --port 5174
 ```
+Or double-click `start.bat` in this directory (or `run.bat` at the root of the repository).
+
+Visit `http://localhost:5174/dashboard`.
+
+---
+
+## 📡 Live Telemetry Connection Modes
+
+### Option A: Web Serial API (Direct in Browser)
+1. Open the dashboard in Google Chrome or Microsoft Edge.
+2. Click **"Connect ESP32 USB"** in the top navigation bar.
+3. Select your ESP32's COM port (baud rate: `115200`).
+4. *Note:* Make sure the Serial Monitor in Arduino IDE is closed.
+
+### Option B: PC-to-Cloud Bridge (`bridge.ps1` / `bridge.bat`)
+Streams USB serial packets from your computer to your remote Render server so mobile devices can view live data over the internet:
+```powershell
+.\bridge.bat
+```
+Prompts for COM Port and Render URL (or `http://localhost:3000`).
+
+### Option C: Production Node.js Server (`server.js`)
+Build and run the production server:
+```bash
+npm run build
+npm start
+```
+Starts native HTTP server on port 3000 (or `PORT` env) with Server-Sent Events (`/api/events`) and static asset hosting.
+
+---
+
+## 🛠️ Project Structure
+
+```text
+src/
+├── App.tsx                  # Main router & layout coordinator
+├── context/
+│   └── TelemetryContext.tsx # Central state machine (Web Serial API + SSE + data parser)
+├── pages/
+│   ├── Landing.tsx          # High-tech ambient launch portal
+│   ├── Dashboard.tsx        # Central monitoring dashboard with real-time graphs
+│   ├── WaveformScope.tsx    # 800-point dual-trace oscilloscope visualizer
+│   ├── GISMap.tsx           # Leaflet GIS feeder map with live theft node alerts
+│   ├── Calibration.tsx      # Hardware calibration matrix & UART monitor
+│   └── Reports.tsx          # Energy audit event logger & CSV/JSON exporter
+├── components/
+│   ├── Navbar.tsx           # Navigation with USB status and connect buttons
+│   └── StatCard.tsx         # Standardized telemetry metric card
+└── types/
+    └── telemetry.ts         # TypeScript interfaces & types
+```
+
+---
+
+## 📄 License
+MIT License.
